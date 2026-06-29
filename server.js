@@ -56,7 +56,9 @@ app.get('/api/sync', async (req, res) => {
         throw new Error('O servidor do governo respondeu com uma página HTML em vez de JSON. Possível bloqueio de Cloudflare contra o IP do servidor da Render.');
       }
 
-      const dataList = response.data?.value || [];
+      const dataList = Array.isArray(response.data) 
+        ? response.data 
+        : (response.data?.value || []);
 
       if (dataList.length === 0) {
         console.log('Fim da resposta da API do governo.');
