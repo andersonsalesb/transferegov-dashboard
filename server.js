@@ -42,9 +42,19 @@ app.get('/api/sync', async (req, res) => {
 
       const response = await axios.get(url, {
         params: { limit: currentLimit, offset },
-        headers: { accept: 'application/json' },
+        headers: { 
+          'accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+        },
         timeout: 30000
       });
+
+      console.log(`Lote recebido. Status: ${response.status}. Tipo do conteúdo: ${typeof response.data}`);
+
+      // Se a resposta for HTML (provável bloqueio de Cloudflare)
+      if (typeof response.data === 'string' && response.data.trim().startsWith('<!DOCTYPE')) {
+        throw new Error('O servidor do governo respondeu com uma página HTML em vez de JSON. Possível bloqueio de Cloudflare contra o IP do servidor da Render.');
+      }
 
       const dataList = response.data?.value || [];
 
