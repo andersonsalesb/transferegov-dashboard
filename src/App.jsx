@@ -1,174 +1,102 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, 
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
 } from 'recharts';
 import { 
-  RefreshCw, FileText, CheckCircle2, Building2, 
-  SlidersHorizontal, TableProperties, Database, Globe
+  RefreshCw, Database, FileText, CheckCircle2, 
+  Building2, SlidersHorizontal, TableProperties
 } from 'lucide-react';
 
 const COLORS = ['#4f46e5', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#06b6d4'];
 
 export default function App() {
-  // Configuração de carregamento
-  const [limitRecords, setLimitRecords] = useState(2000);
-  const [rawData, setRawData] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState(null);
-
   // Estados de filtros
   const [selectedOrgao, setSelectedOrgao] = useState('Todos');
   const [selectedStatus, setSelectedStatus] = useState('Todos');
+  const [limitRecords, setLimitRecords] = useState(2000);
 
-  // Carregar dados na primeira inicialização
+  // Opções de filtros dinâmicas
+  const [filterOptions, setFilterOptions] = useState({ orgaos: [], status: [] });
+
+  // Estados dos dados da API local
+  const [summary, setSummary] = useState(null);
+  const [charts, setCharts] = useState(null);
+  const [detailedData, setDetailedData] = useState([]);
+
+  // Estados de controle de carregamento
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [hasData, setHasData] = useState(false);
+
+  // Carregar dados iniciais e sempre que os filtros mudarem
   useEffect(() => {
-    fetchData();
-  }, []);
+    fetchDashboardData();
+  }, [selectedOrgao, selectedStatus]);
 
-  // Lógica de consulta direta à API do governo via Proxy CORS (allorigins.win)
-  async function fetchData() {
+  async function fetchDashboardData() {
     setIsLoading(true);
-    setErrorMsg(null);
-    
-    // URL da API oficial do governo
-    const govApiUrl = `https://api.transferegov.dth.api.gov.br/transferenciasespeciais/plano_trabalho_analise_historico_especial?limit=${limitRecords}`;
-    
-    // Encapsulando no proxy de CORS gratuito AllOrigins
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(govApiUrl)}`;
-
     try {
-      const response = await fetch(proxyUrl);
-      if (!response.ok) {
-        throw new Error('Falha na comunicação com o servidor de proxy.');
+      const queryParams = new URLSearchParams({
+        orgao: selectedOrgao,
+        status: selectedStatus
+      }).toString();
+
+      // Buscar sumários e filtros em paralelo do backend do Express
+      const [summaryRes, chartsRes, dataRes, filtersRes] = await Promise.all([
+        fetch(`/api/summary?${queryParams}`),
+        fetch(`/api/charts?${queryParams}`),
+        fetch(`/api/data?${queryParams}`),
+        fetch('/api/filters')
+      ]);
+
+      if (summaryRes.ok && chartsRes.ok && dataRes.ok && filtersRes.ok) {
+        const summaryData = await summaryRes.json();
+        const chartsData = await chartsRes.json();
+        const detailedList = await dataRes.json();
+        const filtersData = await filtersRes.json();
+
+        setSummary(summaryData);
+        setCharts(chartsData);
+        setDetailedData(detailedList);
+        setFilterOptions(filtersData);
+        
+        // Verifica se há dados gravados no banco SQLite local
+        setHasData(summaryData.totalAnalises > 0);
+      } else {
+        setHasData(false);
       }
-      
-      const envelope = await response.json();
-      
-      // AllOrigins retorna o JSON original como string dentro do campo "contents"
-      const govData = JSON.parse(envelope.contents);
-      const dataList = govData.value || [];
-      
-      setRawData(dataList);
-      
-      // Resetar filtros ao buscar nova carga de dados
-      setSelectedOrgao('Todos');
-      setSelectedStatus('Todos');
-    } catch (err) {
-      console.error('Erro de requisição:', err);
-      setErrorMsg('Não foi possível carregar os dados da API pública do governo. Verifique sua conexão ou tente novamente.');
+    } catch (error) {
+      console.error('Erro ao buscar dados do dashboard:', error);
+      setHasData(false);
     } finally {
       setIsLoading(false);
     }
   }
 
-  // Filtragem dinâmica dos dados em memória
-  const filteredData = useMemo(() => {
-    return rawData.filter(item => {
-      const matchesOrgao = selectedOrgao === 'Todos' || item.nome_orgao_analise_pt_hist === selectedOrgao;
-      const matchesStatus = selectedStatus === 'Todos' || item.situacao_analise_pt_hist === selectedStatus;
-      return matchesOrgao && matchesStatus;
-    });
-  }, [rawData, selectedOrgao, selectedStatus]);
-
-  // Opções únicas para os dropdowns de filtros
-  const filterOptions = useMemo(() => {
-    const orgaosSet = new Set();
-    const statusSet = new Set();
-    
-    rawData.forEach(item => {
-      if (item.nome_orgao_analise_pt_hist) orgaosSet.add(item.nome_orgao_analise_pt_hist);
-      if (item.situacao_analise_pt_hist) statusSet.add(item.situacao_analise_pt_hist);
-    });
-
-    return {
-      orgaos: sortedArray(orgaosSet),
-      status: sortedArray(statusSet)
-    };
-  }, [rawData]);
-
-  function sortedArray(setObj) {
-    return Array.from(setObj).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  // Executa a extração / sincronização
+  async function handleSync() {
+    setIsSyncing(true);
+    try {
+      const response = await fetch(`/api/sync?limit=${limitRecords}`);
+      const result = await response.json();
+      if (result.success) {
+        alert(result.message);
+        // Recarregar os dados após sincronizar
+        setSelectedOrgao('Todos');
+        setSelectedStatus('Todos');
+        fetchDashboardData();
+      } else {
+        alert('Erro ao sincronizar: ' + result.message);
+      }
+    } catch (error) {
+      alert('Erro na comunicação com o servidor: ' + error.message);
+    } finally {
+      setIsSyncing(false);
+    }
   }
 
-  // Cálculos de KPIs em memória reativos ao filtro
-  const kpiData = useMemo(() => {
-    const total = filteredData.length;
-    
-    const planosUnicos = new Set();
-    const orgaosUnicos = new Set();
-    let concluidas = 0;
-
-    filteredData.forEach(item => {
-      if (item.id_plano_trabalho_analise) planosUnicos.add(item.id_plano_trabalho_analise);
-      if (item.nome_orgao_analise_pt_hist) orgaosUnicos.add(item.nome_orgao_analise_pt_hist);
-      if (item.situacao_analise_pt_hist === 'Concluída') concluidas++;
-    });
-
-    const taxa = total > 0 ? ((concluidas / total) * 100).toFixed(1) : '0.0';
-
-    return {
-      totalAnalises: total,
-      totalPlanos: planosUnicos.size,
-      totalOrgaos: orgaosUnicos.size,
-      taxaConclusao: parseFloat(taxa)
-    };
-  }, [filteredData]);
-
-  // Agregações de gráficos em memória reativos ao filtro
-  const chartsData = useMemo(() => {
-    if (filteredData.length === 0) return { status: [], parecer: [], orgaos: [], timeline: [] };
-
-    const statusMap = {};
-    const parecerMap = {};
-    const orgaoMap = {};
-    const timelineMap = {};
-
-    filteredData.forEach(item => {
-      // 1. Status
-      const status = item.situacao_analise_pt_hist || 'Não Especificado';
-      statusMap[status] = (statusMap[status] || 0) + 1;
-
-      // 2. Parecer
-      const parecer = item.situacao_parecer_analise_pt_hist || 'Sem Parecer';
-      parecerMap[parecer] = (parecerMap[parecer] || 0) + 1;
-
-      // 3. Órgão
-      const orgao = item.nome_orgao_analise_pt_hist || 'Não Especificado';
-      orgaoMap[orgao] = (orgaoMap[orgao] || 0) + 1;
-
-      // 4. Timeline (Extrai Ano-Mês)
-      if (item.data_analise_pt_hist) {
-        const period = item.data_analise_pt_hist.substring(0, 7); // "YYYY-MM"
-        timelineMap[period] = (timelineMap[period] || 0) + 1;
-      }
-    });
-
-    // Formatar para Recharts
-    const statusData = Object.entries(statusMap).map(([name, value]) => ({ name, value }));
-    
-    const parecerData = Object.entries(parecerMap)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-
-    const orgaosData = Object.entries(orgaoMap)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10); // Top 10
-
-    const timelineData = Object.entries(timelineMap)
-      .map(([period, count]) => ({ period, count }))
-      .sort((a, b) => a.period.localeCompare(b.period));
-
-    return {
-      status: statusData,
-      parecer: parecerData,
-      orgaos: orgaosData,
-      timeline: timelineData
-    };
-  }, [filteredData]);
-
-  // Formatação de data amigável
+  // Formatação de data simples
   function formatDate(isoString) {
     if (!isoString) return '-';
     try {
@@ -179,6 +107,73 @@ export default function App() {
     }
   }
 
+  // Tela Inicial (Sem dados no SQLite)
+  if (!isLoading && !hasData && !isSyncing) {
+    return (
+      <div className="app-container" style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <div className="welcome-card">
+          <div className="welcome-icon">
+            <Database size={32} />
+          </div>
+          <h2 className="welcome-title">Carregamento de Dados Inicial</h2>
+          <p className="welcome-desc">
+            Não existem dados carregados no banco de dados local SQLite. É necessário sincronizar as informações a partir do endpoint público do Transferegov.br.
+          </p>
+          
+          <div className="steps-list">
+            <div className="step-item">
+              <span className="step-number">1.</span>
+              <span>Defina a quantidade de registros que quer puxar da API (limite padrão: 2000).</span>
+            </div>
+            <div className="step-item">
+              <span className="step-number">2.</span>
+              <span>Clique no botão abaixo para baixar os dados históricos de análises de planos de trabalho das Transferências Especiais.</span>
+            </div>
+          </div>
+
+          <div className="form-group" style={{ width: '100%', maxWidth: '280px', marginTop: '10px' }}>
+            <label className="form-label">Limite de Registros:</label>
+            <input 
+              type="number" 
+              className="form-input"
+              value={limitRecords} 
+              onChange={(e) => setLimitRecords(Number(e.target.value))}
+              min="100" 
+              max="50000" 
+            />
+          </div>
+
+          <button className="btn btn-primary" onClick={handleSync} style={{ maxWidth: '280px' }}>
+            <RefreshCw size={16} /> Sincronizar com a API
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Tela de Sincronização Ativa
+  if (isSyncing) {
+    return (
+      <div className="app-container" style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <div className="welcome-card">
+          <div className="welcome-icon" style={{ animation: 'spin 2s linear infinite' }}>
+            <RefreshCw size={32} />
+          </div>
+          <h2 className="welcome-title">Sincronizando Dados...</h2>
+          <p className="welcome-desc">
+            O backend local está buscando os dados de Transferências Especiais da API oficial do governo e gerando os índices no SQLite. Isso pode levar alguns segundos.
+          </p>
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-container">
       {/* Barra Lateral de Controles */}
@@ -186,7 +181,7 @@ export default function App() {
         <div className="sidebar-title">
           <span>📊 Transferegov</span>
         </div>
-        <div className="sidebar-subtitle">Painel Frontend-Only (Sem BD)</div>
+        <div className="sidebar-subtitle">Painel de Transferências Especiais</div>
 
         <hr style={{ border: '0', borderTop: '1px solid var(--border-color)' }} />
 
@@ -194,7 +189,7 @@ export default function App() {
         <div className="sidebar-section">
           <div className="sidebar-section-title">
             <SlidersHorizontal size={14} style={{ display: 'inline', marginRight: '6px' }} />
-            Filtros Dinâmicos
+            Filtros
           </div>
           
           <div className="form-group">
@@ -203,7 +198,6 @@ export default function App() {
               className="form-select"
               value={selectedOrgao} 
               onChange={(e) => setSelectedOrgao(e.target.value)}
-              disabled={isLoading || rawData.length === 0}
             >
               <option value="Todos">Todos os Órgãos</option>
               {filterOptions.orgaos.map((org, index) => (
@@ -218,7 +212,6 @@ export default function App() {
               className="form-select"
               value={selectedStatus} 
               onChange={(e) => setSelectedStatus(e.target.value)}
-              disabled={isLoading || rawData.length === 0}
             >
               <option value="Todos">Todas as Situações</option>
               {filterOptions.status.map((stat, index) => (
@@ -232,34 +225,23 @@ export default function App() {
 
         {/* Seção Sincronização */}
         <div className="sidebar-section">
-          <div className="sidebar-section-title">Carga de Dados (API)</div>
+          <div className="sidebar-section-title">Base de Dados (SQLite)</div>
           <div className="form-group">
-            <label className="form-label">Quantidade de Linhas</label>
+            <label className="form-label">Limite para Nova Carga</label>
             <input 
               type="number" 
               className="form-input" 
               value={limitRecords} 
               onChange={(e) => setLimitRecords(Number(e.target.value))}
-              min="100"
-              max="50000"
-              disabled={isLoading}
             />
           </div>
           <button 
             className="btn btn-primary" 
-            onClick={fetchData}
+            onClick={handleSync}
             disabled={isLoading}
           >
-            <RefreshCw size={14} style={{ animation: isLoading ? 'spin 1.5s linear infinite' : 'none' }} /> 
-            {isLoading ? 'Carregando...' : 'Atualizar Dados'}
+            <RefreshCw size={14} /> Atualizar Banco Local
           </button>
-        </div>
-
-        <div className="sidebar-section" style={{ marginTop: 'auto' }}>
-          <div style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Globe size={12} />
-            Consultando via CORS Proxy
-          </div>
         </div>
       </aside>
 
@@ -267,38 +249,12 @@ export default function App() {
       <main className="main-content">
         <header className="header">
           <h1 className="header-title">Histórico de Análise de Planos de Trabalho</h1>
-          <div className="header-desc">Painel visual estático sem persistência. Consulta em tempo real à base pública das Transferências Especiais.</div>
+          <div className="header-desc">Monitoramento analítico das emendas parlamentares na modalidade de transferência especial.</div>
         </header>
 
-        {errorMsg && (
-          <div style={{ backgroundColor: '#fee2e2', color: '#b91c1c', padding: '16px', borderRadius: '8px', marginBottom: '24px', fontSize: '14px', border: '1px solid #fca5a5' }}>
-            <strong>Erro: </strong> {errorMsg}
-          </div>
-        )}
-
         {isLoading ? (
-          <div style={{ textAlign: 'center', padding: '80px 0', color: 'var(--text-muted)' }}>
-            <RefreshCw size={40} style={{ animation: 'spin 1.5s linear infinite', marginBottom: '16px', color: 'var(--primary)' }} />
-            <div>Buscando e processando registros da base de dados do governo...</div>
-            <style>{`
-              @keyframes spin {
-                from { transform: rotate(0deg); }
-                to { transform: rotate(360deg); }
-              }
-            `}</style>
-          </div>
-        ) : rawData.length === 0 ? (
-          <div className="welcome-card" style={{ marginTop: '40px' }}>
-            <div className="welcome-icon">
-              <Database size={32} />
-            </div>
-            <h2 className="welcome-title">Carregar Informações</h2>
-            <p className="welcome-desc">
-              Pressione o botão para buscar os dados diretamente do portal do governo (Transferegov.br) através do proxy de CORS.
-            </p>
-            <button className="btn btn-primary" onClick={fetchData} style={{ maxWidth: '280px' }}>
-              <RefreshCw size={16} /> Consultar API Oficial
-            </button>
+          <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>
+            Carregando dados estatísticos...
           </div>
         ) : (
           <>
@@ -310,7 +266,7 @@ export default function App() {
                 </div>
                 <div className="kpi-info">
                   <span className="kpi-title">Total de Análises</span>
-                  <span className="kpi-value">{kpiData.totalAnalises}</span>
+                  <span className="kpi-value">{summary?.totalAnalises}</span>
                 </div>
               </div>
 
@@ -320,7 +276,7 @@ export default function App() {
                 </div>
                 <div className="kpi-info">
                   <span className="kpi-title">Planos Únicos</span>
-                  <span className="kpi-value">{kpiData.totalPlanos}</span>
+                  <span className="kpi-value">{summary?.totalPlanos}</span>
                 </div>
               </div>
 
@@ -329,8 +285,8 @@ export default function App() {
                   <Building2 size={20} />
                 </div>
                 <div className="kpi-info">
-                  <span className="kpi-title">Órgãos Filtrados</span>
-                  <span className="kpi-value">{kpiData.totalOrgaos}</span>
+                  <span className="kpi-title">Órgãos Envolvidos</span>
+                  <span className="kpi-value">{summary?.totalOrgaos}</span>
                 </div>
               </div>
 
@@ -340,7 +296,7 @@ export default function App() {
                 </div>
                 <div className="kpi-info">
                   <span className="kpi-title">Taxa Conclusão</span>
-                  <span className="kpi-value">{kpiData.taxaConclusao}%</span>
+                  <span className="kpi-value">{summary?.taxaConclusao}%</span>
                 </div>
               </div>
             </section>
@@ -354,7 +310,7 @@ export default function App() {
                   <ResponsiveContainer>
                     <PieChart>
                       <Pie
-                        data={chartsData.status}
+                        data={charts?.statusData}
                         cx="50%"
                         cy="50%"
                         innerRadius={60}
@@ -362,7 +318,7 @@ export default function App() {
                         paddingAngle={5}
                         dataKey="value"
                       >
-                        {chartsData.status.map((entry, index) => (
+                        {charts?.statusData.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
@@ -379,7 +335,7 @@ export default function App() {
                 <div style={{ width: '100%', height: 260 }}>
                   <ResponsiveContainer>
                     <BarChart
-                      data={chartsData.parecer}
+                      data={charts?.parecerData}
                       layout="vertical"
                       margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
                     >
@@ -399,7 +355,7 @@ export default function App() {
                 <div style={{ width: '100%', height: 280 }}>
                   <ResponsiveContainer>
                     <BarChart
-                      data={chartsData.orgaos}
+                      data={charts?.orgaosData}
                       layout="vertical"
                       margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
                     >
@@ -425,7 +381,7 @@ export default function App() {
                 <div style={{ width: '100%', height: 280 }}>
                   <ResponsiveContainer>
                     <LineChart
-                      data={chartsData.timeline}
+                      data={charts?.timelineData}
                       margin={{ top: 10, right: 30, left: 20, bottom: 5 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -443,7 +399,7 @@ export default function App() {
             <section className="data-card">
               <h3 className="chart-title">
                 <TableProperties size={18} />
-                Dados Detalhados (Amostra de 500 registros filtrados)
+                Dados Detalhados (Amostra de 500 registros)
               </h3>
               
               <div className="table-wrapper">
@@ -459,7 +415,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredData.slice(0, 500).map((row) => (
+                    {detailedData.map((row) => (
                       <tr key={row.id_plano_trabalho_analise}>
                         <td style={{ fontWeight: 600 }}>{row.id_plano_trabalho_analise}</td>
                         <td style={{ fontSize: '13px' }}>{row.nome_orgao_analise_pt_hist || '-'}</td>
@@ -476,7 +432,7 @@ export default function App() {
                         <td style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{row.responsaveis_analise_pt_hist || '-'}</td>
                       </tr>
                     ))}
-                    {filteredData.length === 0 && (
+                    {detailedData.length === 0 && (
                       <tr>
                         <td colSpan={6} style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)' }}>
                           Nenhum registro encontrado correspondente aos filtros ativos.

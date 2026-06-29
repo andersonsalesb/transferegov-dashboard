@@ -1,18 +1,23 @@
 {
-  "name": "transferegov-dashboard",
-  "private": true,
+  "name": "transferegov-fullstack",
   "version": "1.0.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node server.js"
   },
   "dependencies": {
+    "axios": "^1.7.2",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "lucide-react": "^0.395.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.12.7",
-    "lucide-react": "^0.395.0"
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",

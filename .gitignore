@@ -1,36 +1,15 @@
-# Node.js
+# Node.js dependencies
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# Compilação / Produção
 dist/
 dist-ssr/
 *.local
 
-# Banco de dados local (Importante não subir o cache local de dados)
-backend/transferegov.db
-backend/transferegov.db-journal
+# Database file (very important to keep the cache local and not commit it)
 transferegov.db
 transferegov.db-journal
 
-# Ambientes Virtuais Python (caso tenha criado venv na pasta)
-venv/
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Arquivos de IDEs e do Sistema Operacional
+# IDEs/System files
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.swp
